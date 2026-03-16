@@ -1,0 +1,3 @@
+/doc/*.pdf
+/target/
+/Cargo.lock
