@@ -47,3 +47,13 @@ pub async fn data(
         .ok()
         .ok_or(StatusCode::BAD_REQUEST)
 }
+
+pub fn bearer(request: &Request<Incoming>) -> Result<Box<[u8]>, StatusCode> {
+    request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.as_bytes().strip_prefix(b"Bearer: "))
+        .ok_or(StatusCode::UNAUTHORIZED)
+        .map(Vec::from)
+        .map(Vec::into_boxed_slice)
+}
