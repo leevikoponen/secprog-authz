@@ -1,0 +1,20 @@
+{
+    "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+    "assist": {
+        "actions": {
+            "source": {
+                "organizeImports": "on"
+            }
+        }
+    },
+    "formatter": {
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineWidth": 100
+    },
+    "vcs": {
+        "clientKind": "git",
+        "enabled": true,
+        "useIgnoreFile": true
+    }
+}

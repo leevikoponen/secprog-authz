@@ -1,5 +1,9 @@
 use argon2::Argon2;
-use hyper::http::{Method, StatusCode};
+use hyper::{
+    body::Bytes,
+    header::HeaderValue,
+    http::{Method, StatusCode},
+};
 use rusqlite::Connection;
 
 use crate::{token::HmacSecurity, worker::OffThread};
@@ -13,6 +17,7 @@ mod token;
 mod worker;
 
 fn main() -> anyhow::Result<()> {
+    let frontend = std::fs::read("index.html").map(Bytes::from_owner)?;
     let database = Connection::open("app.sqlite3")?;
     database.execute_batch(
         "
@@ -33,6 +38,11 @@ fn main() -> anyhow::Result<()> {
             context,
             cancellation,
             async move |mut request| match extract::route(&request) {
+                (&Method::GET, "" | "index.html") => reply::data(
+                    StatusCode::OK,
+                    HeaderValue::from_static("text/html"),
+                    frontend.clone(),
+                ),
                 (&Method::POST, "register") => {
                     handler::register(&persistence, &authentication, &mut request)
                         .await

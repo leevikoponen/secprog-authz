@@ -1,4 +1,16 @@
+# built report artifacts
 /doc/*.pdf
+
+# cargo build artifacts
 /target/
 /Cargo.lock
+
+# npm dependency artifacts
+/node_modules/
+/package-lock.json
+
+# frontend build output
+/index.html
+
+# backend database file
 /app.sqlite3
