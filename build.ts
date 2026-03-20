@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { type BuildOptions, buildSync, type Metafile, type OutputFile } from "esbuild";
@@ -37,7 +38,7 @@ function collectAssets(meta: Metafile, files: OutputFile[]): BuildOutput {
 }
 
 const config = {
-    entryPoints: [join("web", "index.ts")],
+    entryPoints: [join("web", "index.tsx")],
     format: "esm",
     outdir: "/fake",
     target: tsconfig.compilerOptions.target,
