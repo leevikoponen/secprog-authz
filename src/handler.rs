@@ -72,20 +72,20 @@ pub async fn login(
         .ok()
         .ok_or(StatusCode::BAD_REQUEST)?;
 
-    let hashed = authentication
-        .schedule_task(move |hasher| hasher.hash_password(password.as_bytes()))
-        .await
-        .ok()
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (fetching, hashing) = futures_util::future::join(
+        persistence.schedule_task(move |database| database.fetch_by_name(&username)),
+        authentication.schedule_task(move |hasher| hasher.hash_password(password.as_bytes())),
+    )
+    .await;
 
-    let UserInfo { id, password } = persistence
-        .schedule_task(move |database| database.fetch_by_name(&username))
-        .await
+    let hashed = hashing.ok().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let found = fetching
         .ok()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if password
+    if found
+        .password
         .hash
         .expect("stored password hash should contain output value")
         != hashed
@@ -96,7 +96,7 @@ pub async fn login(
     }
 
     let token = verification
-        .schedule_task(move |security| security.sign_jwt(&IdentityToken { user: id }))
+        .schedule_task(move |security| security.sign_jwt(&IdentityToken { user: found.id }))
         .await;
 
     Ok(crate::reply::data(
