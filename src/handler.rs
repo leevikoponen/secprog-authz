@@ -1,13 +1,16 @@
-use argon2::{Argon2, PasswordHash, PasswordHasher as _};
+use argon2::{Argon2, PasswordHasher as _};
 use hyper::{
     body::{Bytes, Incoming},
     header::HeaderValue,
     http::{Request, Response, StatusCode},
 };
-use rusqlite::{Connection, OptionalExtension as _};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{token::HmacSecurity, worker::OffThread};
+use crate::{
+    storage::{UserInfo, UserRepository},
+    token::HmacSecurity,
+    worker::OffThread,
+};
 
 const BODY_LIMIT: usize = 512;
 
@@ -22,13 +25,8 @@ struct IdentityToken {
     user: i64,
 }
 
-struct UserInfo {
-    id: i64,
-    password: PasswordHash,
-}
-
 pub async fn register(
-    persistence: &OffThread<Connection>,
+    persistence: &OffThread<UserRepository>,
     authentication: &OffThread<Argon2<'static>>,
     request: &mut Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
@@ -47,20 +45,12 @@ pub async fn register(
         .to_string();
 
     let changed = persistence
-        .schedule_task(move |database| {
-            database.execute(
-                "
-                insert into users (username, password_hash)
-                values (?1, ?2)
-                ",
-                [username, hashed],
-            )
-        })
+        .schedule_task(move |database| database.create_new_account(&username, &hashed))
         .await
         .and_then(Result::ok)
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if changed != 1 {
+    if !changed {
         return Err(StatusCode::CONFLICT);
     }
 
@@ -68,7 +58,7 @@ pub async fn register(
 }
 
 pub async fn login(
-    persistence: &OffThread<Connection>,
+    persistence: &OffThread<UserRepository>,
     authentication: &OffThread<Argon2<'static>>,
     verification: &OffThread<HmacSecurity>,
     request: &mut Request<Incoming>,
@@ -86,31 +76,12 @@ pub async fn login(
         .and_then(Result::ok)
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let UserInfo { id, password } =
-        persistence
-            .schedule_task(move |database| {
-                database
-                    .query_row(
-                        "
-                        select (id, password_hash) from users
-                        where username = ?1
-                        ",
-                        [username],
-                        |row| {
-                            Ok(UserInfo {
-                                id: row.get(0)?,
-                                password: row.get_ref(1)?.as_str()?.parse().expect(
-                                    "user database shouldn't contain invalid password hashes",
-                                ),
-                            })
-                        },
-                    )
-                    .optional()
-            })
-            .await
-            .and_then(Result::ok)
-            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+    let UserInfo { id, password } = persistence
+        .schedule_task(move |database| database.fetch_by_name(&username))
+        .await
+        .and_then(Result::ok)
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if password
         .hash

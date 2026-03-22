@@ -4,30 +4,21 @@ use hyper::{
     header::HeaderValue,
     http::{Method, StatusCode},
 };
-use rusqlite::Connection;
 
-use crate::{token::HmacSecurity, worker::OffThread};
+use crate::{storage::UserRepository, token::HmacSecurity, worker::OffThread};
 
 mod extract;
 mod handler;
 mod reply;
 mod runtime;
 mod server;
+mod storage;
 mod token;
 mod worker;
 
 fn main() -> anyhow::Result<()> {
     let frontend = std::fs::read("index.html").map(Bytes::from_owner)?;
-    let database = Connection::open("app.sqlite3")?;
-    database.execute_batch(
-        "
-        create table if not exists users (
-            id integer primary key,
-            username text unique not null,
-            password_hash text not null
-        ) strict;
-        ",
-    )?;
+    let database = UserRepository::initialize_from_env()?;
 
     let (persistence, _) = OffThread::spawn_single(database, 16);
     let (authentication, _) = OffThread::spawn_many(Argon2::default(), 2, 16);
