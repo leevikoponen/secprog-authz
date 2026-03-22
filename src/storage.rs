@@ -1,5 +1,5 @@
 use argon2::PasswordHash;
-use rusqlite::{Connection, Error, OptionalExtension as _};
+use rusqlite::{Connection, Error, OptionalExtension};
 
 pub struct UserInfo {
     pub id: i64,
@@ -27,25 +27,23 @@ impl UserRepository {
     }
 
     pub fn fetch_by_name(&self, name: &str) -> Result<Option<UserInfo>, Error> {
-        self.0
-            .query_row(
-                "
-                select (id, password_hash) from users
-                where username = ?1
-                ",
-                [name],
-                |row| {
-                    Ok(UserInfo {
-                        id: row.get(0)?,
-                        password: row
-                            .get_ref(1)?
-                            .as_str()?
-                            .parse()
-                            .expect("user database shouldn't contain invalid password hashes"),
-                    })
-                },
-            )
-            .optional()
+        OptionalExtension::optional(self.0.query_row(
+            "
+            select id, password_hash from users
+            where username = ?1
+            ",
+            [name],
+            |row| {
+                Ok(UserInfo {
+                    id: row.get(0)?,
+                    password: row
+                        .get_ref(1)?
+                        .as_str()?
+                        .parse()
+                        .expect("user database shouldn't contain invalid password hashes"),
+                })
+            },
+        ))
     }
 
     pub fn create_new_account(&self, name: &str, hashed: &str) -> Result<bool, Error> {

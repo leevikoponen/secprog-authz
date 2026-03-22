@@ -1,4 +1,4 @@
-use argon2::PasswordHasher as _;
+use argon2::{PasswordHasher as _, PasswordVerifier as _};
 use hyper::{
     body::{Bytes, Incoming},
     header::HeaderValue,
@@ -8,12 +8,14 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::application::SharedState;
 
-const BODY_LIMIT: usize = 512;
-
 #[derive(Deserialize)]
 struct LoginForm {
     username: String,
     password: String,
+}
+
+impl LoginForm {
+    const BODY_LIMIT: usize = 512;
 }
 
 #[derive(Deserialize, Serialize)]
@@ -25,8 +27,12 @@ pub async fn register(
     state: &SharedState,
     request: &mut Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
-    let body =
-        crate::extract::data(request, BODY_LIMIT, HeaderValue::from_static("text/json")).await?;
+    let body = crate::extract::data(
+        request,
+        LoginForm::BODY_LIMIT,
+        HeaderValue::from_static("text/json"),
+    )
+    .await?;
 
     let LoginForm { username, password } = serde_json::from_slice(&body)
         .ok()
@@ -60,39 +66,41 @@ pub async fn login(
     state: &SharedState,
     request: &mut Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
-    let body =
-        crate::extract::data(request, BODY_LIMIT, HeaderValue::from_static("text/json")).await?;
+    let body = crate::extract::data(
+        request,
+        LoginForm::BODY_LIMIT,
+        HeaderValue::from_static("text/json"),
+    )
+    .await?;
 
     let LoginForm { username, password } = serde_json::from_slice(&body)
         .ok()
         .ok_or(StatusCode::BAD_REQUEST)?;
 
-    let (fetching, hashing) = futures_util::future::join(
-        state
-            .persistence
-            .schedule_task(move |database| database.fetch_by_name(&username)),
+    let result = state
+        .persistence
+        .schedule_task(move |database| database.fetch_by_name(&username))
+        .await
+        .ok()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // FIXME: not ideal but makes both cases take similar-ish amount of time
+    let Some(found) = result else {
         state
             .authentication
-            .schedule_task(move |hasher| hasher.hash_password(password.as_bytes())),
-    )
-    .await;
+            .schedule_task(move |hasher| hasher.hash_password(password.as_bytes()))
+            .await
+            .expect("password hasher configuration should be valid");
 
-    let hashed = hashing.ok().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let found = fetching
-        .ok()
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    if found
-        .password
-        .hash
-        .expect("stored password hash should contain output value")
-        != hashed
-            .hash
-            .expect("freshly produced password hash should contain output value")
-    {
         return Err(StatusCode::UNAUTHORIZED);
-    }
+    };
+
+    state
+        .authentication
+        .schedule_task(move |hasher| hasher.verify_password(password.as_bytes(), &found.password))
+        .await
+        .ok()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let token = state
         .verification

@@ -1,4 +1,4 @@
-use std::{convert::Infallible, io::ErrorKind, net::Ipv6Addr};
+use std::{convert::Infallible, io::ErrorKind, net::Ipv6Addr, time::Duration};
 
 use anyhow::Result;
 use http_body_util::Full;
@@ -8,9 +8,45 @@ use hyper::{
     server::conn::http1::Builder,
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
-use tokio::net::{TcpListener, TcpSocket};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::Instrument as _;
+
+async fn handle_connection(
+    stream: TcpStream,
+    cancellation: CancellationToken,
+    handler: impl AsyncFn(Request<Incoming>) -> Response<Bytes> + Clone + 'static,
+) {
+    let mut connection = std::pin::pin!(Builder::new().timer(TokioTimer::new()).serve_connection(
+        TokioIo::new(stream),
+        hyper::service::service_fn(async |request| Ok::<_, Infallible>(
+            handler(request).await.map(Full::new)
+        )),
+    ));
+
+    let result = if let Some(result) = cancellation.run_until_cancelled(connection.as_mut()).await {
+        result
+    } else {
+        tracing::info!("shutting down due to cancellation");
+
+        connection.as_mut().graceful_shutdown();
+
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(1), connection).await {
+            result
+        } else {
+            tracing::warn!("graceful shutdown took too long");
+            return;
+        }
+    };
+
+    if let Err(error) = result {
+        if error.is_user() {
+            tracing::error!("service error: {error}");
+        } else {
+            tracing::warn!("connection error: {error}");
+        }
+    }
+}
 
 async fn accept_connections(
     context: TaskTracker,
@@ -37,37 +73,10 @@ async fn accept_connections(
             }
         };
 
-        let cancellation = cancellation.clone();
-        let handler = handler.clone();
-        let future = async move {
-            let mut connection =
-                std::pin::pin!(Builder::new().timer(TokioTimer::new()).serve_connection(
-                    TokioIo::new(stream),
-                    hyper::service::service_fn(async |request| Ok::<_, Infallible>(
-                        handler(request).await.map(Full::new)
-                    )),
-                ));
-
-            let result =
-                if let Some(result) = cancellation.run_until_cancelled(connection.as_mut()).await {
-                    result
-                } else {
-                    tracing::info!("shutting down due to cancellation");
-
-                    connection.as_mut().graceful_shutdown();
-                    connection.await
-                };
-
-            if let Err(error) = result {
-                if error.is_user() {
-                    tracing::error!("service error: {error}");
-                } else {
-                    tracing::warn!("connection error: {error}");
-                }
-            }
-        };
-
-        context.spawn_local(future.instrument(tracing::info_span!("client", ?address)));
+        context.spawn_local(
+            handle_connection(stream, cancellation.clone(), handler.clone())
+                .instrument(tracing::info_span!("client", ?address)),
+        );
     }
 }
 

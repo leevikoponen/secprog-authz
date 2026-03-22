@@ -1,4 +1,4 @@
-import { effect, useComputed, useModel } from "@preact/signals";
+import { useComputed, useModel, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import type { JSX } from "preact";
 import { AuthenticationModel, type LoginBackend, LoginModel } from "./state.ts";
@@ -10,12 +10,22 @@ function LoginForm({ backend }: { backend: LoginBackend }): JSX.Element {
         <form onSubmit={state.finish.bind(state)}>
             <label>
                 Username
-                <input type="text" value={state.username} required />
+                <input
+                    type="text"
+                    value={state.username}
+                    onInput={state.update.bind(state, "username")}
+                    required
+                />
             </label>
 
             <label>
                 Password
-                <input type="password" value={state.username} required />
+                <input
+                    type="password"
+                    value={state.password}
+                    onInput={state.update.bind(state, "password")}
+                    required
+                />
             </label>
 
             <button type="button" onClick={state.toggle.bind(state)}>
@@ -32,7 +42,7 @@ export function AuthenticationPage(): JSX.Element {
     const hasToken = useComputed(() => state.token.value !== null);
     const fullyAuthenticated = useComputed(() => state.loading.ready.value && hasToken.value);
 
-    effect(state.check.bind(state));
+    useSignalEffect(state.check.bind(state));
 
     return (
         <>
@@ -47,11 +57,15 @@ export function AuthenticationPage(): JSX.Element {
             </header>
 
             <main>
-                <Show when={state.registered}>
-                    <small>Account created successfully</small>
-                </Show>
-
                 <Show when={state.loading.ready} fallback={<p>Loading...</p>}>
+                    <Show when={state.registered}>
+                        <small>Account created successfully</small>
+                    </Show>
+
+                    <Show when={state.attempted}>
+                        <small>Invalid username or password</small>
+                    </Show>
+
                     <Show when={hasToken} fallback={<LoginForm backend={state} />}>
                         <p>Signed in successfully</p>
                     </Show>

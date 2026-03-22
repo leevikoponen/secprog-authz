@@ -1,4 +1,5 @@
 import { batch, createModel, effect, signal } from "@preact/signals-core";
+import type { TargetedInputEvent } from "preact";
 
 export const PromiseModel = createModel(() => {
     let cancellation: AbortController | undefined;
@@ -32,6 +33,7 @@ export const AuthenticationModel = createModel(() => ({
     loading: new PromiseModel(),
 
     token: signal<string | null>(null),
+    attempted: signal(false),
     registered: signal(false),
 
     login(username: string, password: string): void {
@@ -45,14 +47,18 @@ export const AuthenticationModel = createModel(() => ({
                 body: JSON.stringify({ username, password }),
             });
 
-            if (response.ok) {
-                const token = await response.text();
-
-                batch(() => {
-                    this.token.value = token;
-                    this.registered.value = false;
-                });
+            if (!response.ok) {
+                this.attempted.value = true;
+                return;
             }
+
+            const token = await response.text();
+
+            batch(() => {
+                this.token.value = token;
+                this.attempted.value = false;
+                this.registered.value = false;
+            });
         });
     },
 
@@ -67,9 +73,14 @@ export const AuthenticationModel = createModel(() => ({
                 body: JSON.stringify({ username, password }),
             });
 
-            if (response.ok) {
-                this.registered.value = true;
+            if (!response.ok) {
+                return;
             }
+
+            batch(() => {
+                this.attempted.value = false;
+                this.registered.value = true;
+            });
         });
     },
 
@@ -113,6 +124,10 @@ export const LoginModel = createModel((backend: LoginBackend) => ({
     username: signal(""),
     password: signal(""),
     creating: signal(false),
+
+    update(field: "username" | "password", event: TargetedInputEvent<HTMLInputElement>): void {
+        this[field].value = event.currentTarget.value;
+    },
 
     toggle(): void {
         this.creating.value = !this.creating.value;

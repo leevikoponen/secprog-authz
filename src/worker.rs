@@ -41,10 +41,13 @@ impl<T: Send + Clone + 'static> OffThread<T> {
                 offset += 1;
             }
 
-            workers
-                .into_iter()
-                .try_for_each(|(_, handle)| handle.join())
-                .expect("closed worker threads should finish successfully");
+            for (sender, thread) in workers {
+                drop(sender);
+
+                thread
+                    .join()
+                    .expect("closed worker threads should finish successfully");
+            }
         });
 
         (Self(sender), thread)
