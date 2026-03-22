@@ -1,4 +1,4 @@
-use argon2::{Argon2, PasswordHasher as _};
+use argon2::PasswordHasher as _;
 use hyper::{
     body::{Bytes, Incoming},
     header::HeaderValue,
@@ -6,11 +6,7 @@ use hyper::{
 };
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{
-    storage::{UserInfo, UserRepository},
-    token::HmacSecurity,
-    worker::OffThread,
-};
+use crate::application::SharedState;
 
 const BODY_LIMIT: usize = 512;
 
@@ -26,8 +22,7 @@ struct IdentityToken {
 }
 
 pub async fn register(
-    persistence: &OffThread<UserRepository>,
-    authentication: &OffThread<Argon2<'static>>,
+    state: &SharedState,
     request: &mut Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
     let body =
@@ -37,7 +32,8 @@ pub async fn register(
         .ok()
         .ok_or(StatusCode::BAD_REQUEST)?;
 
-    let hashed = authentication
+    let hashed = state
+        .authentication
         .schedule_task(move |hasher| {
             hasher
                 .hash_password(password.as_bytes())
@@ -46,7 +42,8 @@ pub async fn register(
         .await
         .to_string();
 
-    let changed = persistence
+    let changed = state
+        .persistence
         .schedule_task(move |database| database.create_new_account(&username, &hashed))
         .await
         .ok()
@@ -60,9 +57,7 @@ pub async fn register(
 }
 
 pub async fn login(
-    persistence: &OffThread<UserRepository>,
-    authentication: &OffThread<Argon2<'static>>,
-    verification: &OffThread<HmacSecurity>,
+    state: &SharedState,
     request: &mut Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
     let body =
@@ -73,8 +68,12 @@ pub async fn login(
         .ok_or(StatusCode::BAD_REQUEST)?;
 
     let (fetching, hashing) = futures_util::future::join(
-        persistence.schedule_task(move |database| database.fetch_by_name(&username)),
-        authentication.schedule_task(move |hasher| hasher.hash_password(password.as_bytes())),
+        state
+            .persistence
+            .schedule_task(move |database| database.fetch_by_name(&username)),
+        state
+            .authentication
+            .schedule_task(move |hasher| hasher.hash_password(password.as_bytes())),
     )
     .await;
 
@@ -95,7 +94,8 @@ pub async fn login(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let token = verification
+    let token = state
+        .verification
         .schedule_task(move |security| security.sign_jwt(&IdentityToken { user: found.id }))
         .await;
 
@@ -107,12 +107,13 @@ pub async fn login(
 }
 
 pub async fn check(
-    verification: &OffThread<HmacSecurity>,
+    state: &SharedState,
     request: &Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
     let mut token = crate::extract::bearer(request)?;
 
-    let IdentityToken { .. } = verification
+    let IdentityToken { .. } = state
+        .verification
         .schedule_task(move |security| security.verify_jwt(&mut token))
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
