@@ -55,14 +55,20 @@ impl<T> OffThread<T> {
     pub async fn schedule_task<O: Send + 'static>(
         &self,
         action: impl FnOnce(&mut T) -> O + Send + 'static,
-    ) -> Option<O> {
+    ) -> O {
         let (sender, receiver) = oneshot::channel();
         let task = ActionCallback(Box::new(move |state| {
             let _ = sender.send(action(state));
         }));
 
-        self.0.send(task).await.ok()?;
-        receiver.await.ok()
+        self.0
+            .send(task)
+            .await
+            .expect("worker task channel shouldn't disconnect");
+
+        receiver
+            .await
+            .expect("worker result channel shouldn't disconnect")
     }
 }
 

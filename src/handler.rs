@@ -38,16 +38,18 @@ pub async fn register(
         .ok_or(StatusCode::BAD_REQUEST)?;
 
     let hashed = authentication
-        .schedule_task(move |hasher| hasher.hash_password(password.as_bytes()))
+        .schedule_task(move |hasher| {
+            hasher
+                .hash_password(password.as_bytes())
+                .expect("password hasher configuration should be valid")
+        })
         .await
-        .and_then(Result::ok)
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
         .to_string();
 
     let changed = persistence
         .schedule_task(move |database| database.create_new_account(&username, &hashed))
         .await
-        .and_then(Result::ok)
+        .ok()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if !changed {
@@ -73,13 +75,13 @@ pub async fn login(
     let hashed = authentication
         .schedule_task(move |hasher| hasher.hash_password(password.as_bytes()))
         .await
-        .and_then(Result::ok)
+        .ok()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let UserInfo { id, password } = persistence
         .schedule_task(move |database| database.fetch_by_name(&username))
         .await
-        .and_then(Result::ok)
+        .ok()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
@@ -95,8 +97,7 @@ pub async fn login(
 
     let token = verification
         .schedule_task(move |security| security.sign_jwt(&IdentityToken { user: id }))
-        .await
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await;
 
     Ok(crate::reply::data(
         StatusCode::OK,
@@ -114,7 +115,6 @@ pub async fn check(
     let IdentityToken { .. } = verification
         .schedule_task(move |security| security.verify_jwt(&mut token))
         .await
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     Ok(crate::reply::status(StatusCode::OK))
