@@ -1,9 +1,9 @@
-use argon2::PasswordHash;
+use argon2::password_hash::PasswordHashString;
 use rusqlite::{Connection, Error, OptionalExtension};
 
 pub struct UserInfo {
     pub id: i64,
-    pub password: PasswordHash,
+    pub password: PasswordHashString,
 }
 
 pub struct UserRepository(Connection);

@@ -4,7 +4,7 @@ use hmac::{
     Mac as _,
     digest::{FixedOutput as _, Key, Output},
 };
-use rand::{TryRng as _, rngs::SysRng};
+use rand::{RngCore as _, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
@@ -75,7 +75,7 @@ impl HmacSecurity {
     pub fn generate_random() -> Self {
         let mut output = Key::<Hmac<Sha256>>::default();
 
-        SysRng
+        OsRng
             .try_fill_bytes(&mut output)
             .expect("random number generation shouldn't reasonably fail");
 

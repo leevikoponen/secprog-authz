@@ -1,9 +1,10 @@
-use argon2::{PasswordHasher as _, PasswordVerifier as _};
+use argon2::{PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
 use hyper::{
     body::{Bytes, Incoming},
     header::HeaderValue,
     http::{Request, Response, StatusCode},
 };
+use rand::rngs::OsRng;
 use serde_derive::{Deserialize, Serialize};
 
 use crate::application::SharedState;
@@ -42,8 +43,9 @@ pub async fn register(
         .authentication
         .schedule_task(move |hasher| {
             hasher
-                .hash_password(password.as_bytes())
+                .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
                 .expect("password hasher configuration should be valid")
+                .serialize()
         })
         .await
         .to_string();
@@ -88,16 +90,22 @@ pub async fn login(
     let Some(found) = result else {
         state
             .authentication
-            .schedule_task(move |hasher| hasher.hash_password(password.as_bytes()))
-            .await
-            .expect("password hasher configuration should be valid");
+            .schedule_task(move |hasher| {
+                hasher
+                    .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+                    .expect("password hasher configuration should be valid")
+                    .serialize()
+            })
+            .await;
 
         return Err(StatusCode::UNAUTHORIZED);
     };
 
     state
         .authentication
-        .schedule_task(move |hasher| hasher.verify_password(password.as_bytes(), &found.password))
+        .schedule_task(move |hasher| {
+            hasher.verify_password(password.as_bytes(), &found.password.password_hash())
+        })
         .await
         .ok()
         .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -127,4 +135,27 @@ pub async fn check(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     Ok(crate::reply::status(StatusCode::OK))
+}
+
+#[cfg(test)]
+mod test {
+    use argon2::{Argon2, PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
+    use rand::distributions::{Alphanumeric, DistString as _};
+
+    #[test]
+    fn password_hasher_sanity_check() {
+        let mut rng = rand::thread_rng();
+        let secret = Alphanumeric.sample_string(&mut rng, 32);
+
+        let instance = Argon2::default();
+
+        let salt = SaltString::generate(&mut rng);
+        let hashed = instance
+            .hash_password(secret.as_bytes(), &salt)
+            .expect("hashing password with default parameters shouldn't fail");
+
+        instance
+            .verify_password(secret.as_bytes(), &hashed)
+            .expect("verifying just created password hash shouldn't fail");
+    }
 }
