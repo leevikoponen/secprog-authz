@@ -2,11 +2,12 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
-test("full authentication flow works", async ({ page }) => {
+test("full authentication flow works", async ({ context, page }) => {
     const username = randomBytes(8).toString("hex");
     const password = randomBytes(32).toString("hex");
     const incorrect = randomBytes(32).toString("hex");
 
+    await context.clearCookies();
     await page.goto("/");
 
     await test.step("ensure missing account doesn't work", async () => {
@@ -45,5 +46,17 @@ test("full authentication flow works", async ({ page }) => {
         await page.getByText("Sign in").click();
 
         await expect(page.getByText("Signed in successfully")).toBeVisible();
+    });
+
+    await test.step("ensure successful authentication is retained", async () => {
+        await page.reload();
+
+        await expect(page.getByText("Signed in successfully")).toBeVisible();
+    });
+
+    await test.step("ensure signing out gets back to login form", async () => {
+        await page.getByText("Sign out").click();
+
+        await expect(page.getByText("Sign in")).toBeVisible();
     });
 });

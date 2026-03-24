@@ -38,7 +38,7 @@ function LoginForm({ backend }: { backend: LoginBackend }): JSX.Element {
 }
 
 export function AuthenticationPage(): JSX.Element {
-    const state = useModel(AuthenticationModel);
+    const state = useModel(AuthenticationModel.bind(globalThis, "identity-token"));
     const hasToken = useComputed(() => state.token.value !== null);
     const fullyAuthenticated = useComputed(() => state.loading.ready.value && hasToken.value);
 

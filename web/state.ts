@@ -29,7 +29,7 @@ export const PromiseModel = createModel(() => {
     };
 });
 
-export const AuthenticationModel = createModel(() => ({
+export const AuthenticationModel = createModel((key: string) => ({
     loading: new PromiseModel(),
 
     token: signal<string | null>(null),
@@ -53,6 +53,7 @@ export const AuthenticationModel = createModel(() => ({
             }
 
             const token = await response.text();
+            await cookieStore.set(key, token);
 
             batch(() => {
                 this.token.value = token;
@@ -86,7 +87,7 @@ export const AuthenticationModel = createModel(() => ({
 
     check(): void {
         this.loading.wait(async (interrupt) => {
-            const entry = await cookieStore.get("identity-token");
+            const entry = await cookieStore.get(key);
             if (entry?.value === undefined) {
                 this.token.value = null;
                 return;
@@ -104,14 +105,14 @@ export const AuthenticationModel = createModel(() => ({
                 return;
             }
 
-            await cookieStore.delete("identity-token");
+            await cookieStore.delete(key);
             this.token.value = null;
         });
     },
 
     logout(): void {
         this.token.value = null;
-        this.loading.wait(async (_) => cookieStore.delete("identity-token"));
+        this.loading.wait((_) => cookieStore.delete(key));
     },
 }));
 
