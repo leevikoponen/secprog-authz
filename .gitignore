@@ -14,3 +14,6 @@
 
 # backend database file
 /app.sqlite3
+
+# playwright test output
+/test-results/
