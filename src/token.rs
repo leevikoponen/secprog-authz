@@ -50,20 +50,21 @@ impl TokenTraverser {
         let [first, second] = Self::find_separators(token)?;
 
         let (first, remaining) = token.split_at_mut(first);
-        let (second, remaining) = remaining.split_at_mut(second - first.len());
-        let (_, third) = remaining.split_at_mut(1);
+        let (second, remaining) = remaining[1..].split_at_mut(second - first.len() - 1);
+        let third = &mut remaining[1..];
 
         Some([first, second, third])
     }
 
-    fn decode_sections(token: &mut [u8]) -> Option<[&[u8]; 3]> {
-        let [first, second, third] = Self::split_sections(token)?;
+    fn decode_sections(token: &mut [u8]) -> Option<[&mut [u8]; 3]> {
+        let [first, second, third] = Self::split_sections(token)?.map(|section| {
+            Base64Url::decode_in_place(section)
+                .ok()
+                .map(<[_]>::len)
+                .map(|end| &mut section[..end])
+        });
 
-        let first = Base64Url::decode_in_place(first).ok()?;
-        let second = Base64Url::decode_in_place(second).ok()?;
-        let third = Base64Url::decode_in_place(third).ok()?;
-
-        Some([first, second, third])
+        Some([first?, second?, third?])
     }
 }
 
@@ -93,7 +94,7 @@ impl HmacSecurity {
 
         Hmac::<Sha256>::new(&self.0)
             .chain_update(first)
-            .chain_update(second)
+            .chain_update(&second)
             .verify_slice(third)
             .ok()?;
 
@@ -114,21 +115,37 @@ impl HmacSecurity {
         let mut offset = 0;
 
         for section in [HS256_HEADER.as_bytes(), payload.as_bytes()] {
-            let written = Base64Url::encode(section, &mut buffer[offset..])
-                .expect("output buffer should have been correctly sized");
-
-            offset += written.len();
-            hmac.update(written.as_bytes());
+            hmac.update(section);
+            offset += Base64Url::encode(section, &mut buffer[offset..])
+                .expect("output buffer should have been correctly sized")
+                .len();
 
             buffer[offset] = SECTION_SEPARATOR;
             offset += 1;
         }
 
         hmac.finalize_into(&mut digest);
-
         Base64Url::encode(digest.as_slice(), &mut buffer[offset..])
             .expect("output buffer should have been correctly sized");
 
         String::from_utf8(buffer).expect("encoded data should be valid utf-8")
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::token::HmacSecurity;
+
+    #[test]
+    fn token_handling_sanity_check() {
+        let secret = HmacSecurity::generate_random();
+        let value = "foo";
+
+        let mut token = secret.sign_jwt(&value).into_bytes();
+        let payload = secret
+            .verify_jwt::<&str>(token.as_mut_slice())
+            .expect("verifying just created token shouldn't fail");
+
+        assert_eq!(payload, value);
     }
 }
