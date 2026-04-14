@@ -4,12 +4,12 @@ use hyper::{
 };
 
 mod application;
+mod crypto;
 mod extract;
 mod handler;
 mod reply;
 mod server;
 mod storage;
-mod token;
 mod worker;
 
 fn main() -> anyhow::Result<()> {

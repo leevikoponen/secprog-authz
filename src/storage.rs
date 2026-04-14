@@ -4,6 +4,7 @@ use rusqlite::{Connection, Error, OptionalExtension};
 pub struct UserInfo {
     pub id: i64,
     pub password: PasswordHashString,
+    pub totp: Option<Box<[u8]>>,
 }
 
 pub struct UserRepository(Connection);
@@ -18,7 +19,8 @@ impl UserRepository {
             create table if not exists users (
                 id integer primary key,
                 username text unique not null,
-                password_hash text not null
+                password_hash text not null,
+                totp_secret blob
             ) strict;
             ",
         )?;
@@ -29,7 +31,7 @@ impl UserRepository {
     pub fn fetch_by_name(&self, name: &str) -> Result<Option<UserInfo>, Error> {
         OptionalExtension::optional(self.0.query_row(
             "
-            select id, password_hash from users
+            select id, password_hash, totp_secret from users
             where username = ?1
             ",
             [name],
@@ -41,6 +43,11 @@ impl UserRepository {
                         .as_str()?
                         .parse()
                         .expect("user database shouldn't contain invalid password hashes"),
+                    totp: row
+                        .get_ref(2)?
+                        .as_blob_or_null()?
+                        .map(Vec::from)
+                        .map(Vec::into_boxed_slice),
                 })
             },
         ))

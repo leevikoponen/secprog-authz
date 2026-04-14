@@ -1,3 +1,9 @@
+use std::{
+    fmt::Write as _,
+    time::{Duration, SystemTime},
+};
+
+use arrayvec::ArrayString;
 use base64ct::{Base64Url, Encoding as _};
 use hmac::{
     Hmac,
@@ -10,6 +16,8 @@ use sha2::Sha256;
 
 const HS256_HEADER: &str = r#"{"typ":"jwt","alg":"HS256"}"#;
 const SECTION_SEPARATOR: u8 = b'.';
+const TOTP_DIGITS: usize = 8;
+const TOTP_STEP: Duration = Duration::from_secs(30);
 
 enum TokenTraverser {
     Initial,
@@ -83,6 +91,10 @@ impl HmacSecurity {
         Self(output)
     }
 
+    pub fn from_secret(value: &[u8]) -> Self {
+        Self(Key::<Hmac<Sha256>>::clone_from_slice(value))
+    }
+
     pub fn verify_jwt<'buffer, T: Deserialize<'buffer>>(
         &self,
         token: &'buffer mut [u8],
@@ -130,11 +142,56 @@ impl HmacSecurity {
 
         String::from_utf8(buffer).expect("encoded data should be valid utf-8")
     }
+
+    pub fn generate_totp(&self, time: SystemTime) -> ArrayString<TOTP_DIGITS> {
+        let time = time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("time shouldn't reasonably be before unix epoch")
+            .as_secs();
+
+        let hash = Hmac::<Sha256>::new(&self.0)
+            .chain_update((time / TOTP_STEP.as_secs()).to_be_bytes())
+            .finalize()
+            .into_bytes();
+
+        let offset = usize::from(hash.last().expect("computed hash shouln't be empty") & 0xf);
+        let binary = (u64::from(hash[offset] & 0x7f) << 24)
+            | (u64::from(hash[offset + 1]) << 16)
+            | (u64::from(hash[offset + 2]) << 8)
+            | u64::from(hash[offset + 3]);
+
+        let mut output = ArrayString::new();
+        write!(
+            &mut output,
+            "{:01$}",
+            binary
+                % 10u64.pow(
+                    TOTP_DIGITS
+                        .try_into()
+                        .expect("totp digits shouldn't be unreasonably large")
+                ),
+            TOTP_DIGITS
+        )
+        .expect("totp code should be writable to correctly sized buffer");
+
+        output
+    }
+
+    pub fn verify_totp(&self, time: SystemTime, given: &str) -> bool {
+        [time, time - TOTP_STEP, time + TOTP_STEP]
+            .into_iter()
+            .any(|attempt| &self.generate_totp(attempt) == given)
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::token::HmacSecurity;
+    use std::time::{Duration, SystemTime};
+
+    use argon2::{Argon2, PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
+    use rand::distributions::{Alphanumeric, DistString as _, Distribution as _, Uniform};
+
+    use crate::crypto::{HmacSecurity, TOTP_DIGITS, TOTP_STEP};
 
     #[test]
     fn token_handling_sanity_check() {
@@ -147,5 +204,45 @@ mod test {
             .expect("verifying just created token shouldn't fail");
 
         assert_eq!(payload, value);
+    }
+
+    #[test]
+    fn password_hasher_sanity_check() {
+        let mut rng = rand::thread_rng();
+        let secret = Alphanumeric.sample_string(&mut rng, 32);
+
+        let instance = Argon2::default();
+
+        let salt = SaltString::generate(&mut rng);
+        let hashed = instance
+            .hash_password(secret.as_bytes(), &salt)
+            .expect("hashing password with default parameters shouldn't fail");
+
+        instance
+            .verify_password(secret.as_bytes(), &hashed)
+            .expect("verifying just created password hash shouldn't fail");
+    }
+
+    #[test]
+    fn totp_generation_sanity_check() {
+        let secret = HmacSecurity::generate_random();
+        let time = SystemTime::now();
+
+        for offset in Uniform::new(Duration::ZERO, TOTP_STEP)
+            .sample_iter(&mut rand::thread_rng())
+            .take(100)
+        {
+            let code = secret.generate_totp(time);
+
+            assert!(
+                code.chars().filter(char::is_ascii_digit).count() == TOTP_DIGITS,
+                "totp codes should only contain digits"
+            );
+
+            assert!(
+                secret.verify_totp(time + offset, &code),
+                "totp codes of times well within step should match"
+            );
+        }
     }
 }

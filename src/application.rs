@@ -7,7 +7,7 @@ use tokio::{runtime::Builder, task::LocalSet};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing_subscriber::fmt::writer::{OptionalWriter, Tee};
 
-use crate::{storage::UserRepository, token::HmacSecurity, worker::OffThread};
+use crate::{crypto::HmacSecurity, storage::UserRepository, worker::OffThread};
 
 pub struct SharedState {
     pub page: Bytes,

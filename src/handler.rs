@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use argon2::{PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
 use hyper::{
     body::{Bytes, Incoming},
@@ -7,12 +9,13 @@ use hyper::{
 use rand::rngs::OsRng;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::application::SharedState;
+use crate::{application::SharedState, crypto::HmacSecurity};
 
 #[derive(Deserialize)]
 struct LoginForm {
-    username: String,
-    password: String,
+    username: Box<str>,
+    password: Box<str>,
+    totp: Option<Box<str>>,
 }
 
 impl LoginForm {
@@ -35,7 +38,9 @@ pub async fn register(
     )
     .await?;
 
-    let LoginForm { username, password } = serde_json::from_slice(&body)
+    let LoginForm {
+        username, password, ..
+    } = serde_json::from_slice(&body)
         .ok()
         .ok_or(StatusCode::BAD_REQUEST)?;
 
@@ -75,7 +80,11 @@ pub async fn login(
     )
     .await?;
 
-    let LoginForm { username, password } = serde_json::from_slice(&body)
+    let LoginForm {
+        username,
+        password,
+        totp,
+    } = serde_json::from_slice(&body)
         .ok()
         .ok_or(StatusCode::BAD_REQUEST)?;
 
@@ -100,6 +109,19 @@ pub async fn login(
 
         return Err(StatusCode::UNAUTHORIZED);
     };
+
+    if let Some(security) = found.totp.as_deref().map(HmacSecurity::from_secret) {
+        // FIXME: constant time equal even tough just tiny string of base 10 digits
+        let code = totp.ok_or(StatusCode::FORBIDDEN)?;
+        let correct = state
+            .verification
+            .schedule_task(move |_| security.verify_totp(SystemTime::now(), &code))
+            .await;
+
+        if !correct {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
 
     state
         .authentication
@@ -135,27 +157,4 @@ pub async fn check(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     Ok(crate::reply::status(StatusCode::OK))
-}
-
-#[cfg(test)]
-mod test {
-    use argon2::{Argon2, PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
-    use rand::distributions::{Alphanumeric, DistString as _};
-
-    #[test]
-    fn password_hasher_sanity_check() {
-        let mut rng = rand::thread_rng();
-        let secret = Alphanumeric.sample_string(&mut rng, 32);
-
-        let instance = Argon2::default();
-
-        let salt = SaltString::generate(&mut rng);
-        let hashed = instance
-            .hash_password(secret.as_bytes(), &salt)
-            .expect("hashing password with default parameters shouldn't fail");
-
-        instance
-            .verify_password(secret.as_bytes(), &hashed)
-            .expect("verifying just created password hash shouldn't fail");
-    }
 }
