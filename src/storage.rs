@@ -7,6 +7,10 @@ pub struct UserInfo {
     pub totp: Option<Box<[u8]>>,
 }
 
+pub struct CodeExchange {
+    pub user: i64,
+}
+
 pub struct UserRepository(Connection);
 
 impl UserRepository {
@@ -16,11 +20,16 @@ impl UserRepository {
 
         database.execute_batch(
             "
-            create table if not exists users (
+            create table if not exists user (
                 id integer primary key,
                 username text unique not null,
                 password_hash text not null,
                 totp_secret blob
+            ) strict;
+
+            create table if not exists exchange (
+                code text primary key,
+                user integer not null references user
             ) strict;
             ",
         )?;
@@ -31,7 +40,7 @@ impl UserRepository {
     pub fn fetch_by_name(&self, name: &str) -> Result<Option<UserInfo>, Error> {
         OptionalExtension::optional(self.0.query_row(
             "
-            select id, password_hash, totp_secret from users
+            select id, password_hash, totp_secret from user
             where username = ?1
             ",
             [name],
@@ -56,12 +65,40 @@ impl UserRepository {
     pub fn create_new_account(&self, name: &str, hashed: &str) -> Result<bool, Error> {
         let changed = self.0.execute(
             "
-            insert into users (username, password_hash)
+            insert into user (username, password_hash)
             values (?1, ?2)
             ",
             [name, hashed],
         )?;
 
         Ok(changed == 1)
+    }
+
+    pub fn create_code_exchange(&self, user: i64, state: Option<&str>) -> Result<Box<str>, Error> {
+        self.0.query_one(
+            "
+            insert into exchange (code, user, state)
+            values (hex(randomblob(16)), ?1, ?2)
+            returning code
+            ",
+            (user, state),
+            |row| row.get(0),
+        )
+    }
+
+    pub fn take_code_exchange(
+        &self,
+        code: &str,
+        state: Option<&str>,
+    ) -> Result<Option<CodeExchange>, Error> {
+        OptionalExtension::optional(self.0.query_one(
+            "
+            delete from exchange
+            where code = ?1 and state = ?2
+            returning user
+            ",
+            (code, state),
+            |row| Ok(CodeExchange { user: row.get(0)? }),
+        ))
     }
 }

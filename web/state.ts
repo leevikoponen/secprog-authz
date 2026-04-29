@@ -144,3 +144,53 @@ export const LoginModel = createModel((backend: LoginBackend) => ({
         }
     },
 }));
+
+function copiedQueryParameters(
+    source: URLSearchParams,
+    fields: string[],
+    additional: Record<string, string>,
+): URLSearchParams {
+    const output = new URLSearchParams(additional);
+    for (const name of fields) {
+        const value = source.get(name);
+        if (value !== null) {
+            output.set(name, value);
+        }
+    }
+
+    return output;
+}
+
+export const AuthorizationModel = createModel((token: string) => ({
+    loading: new PromiseModel(),
+
+    confirm(event: SubmitEvent): void {
+        event.preventDefault();
+
+        this.loading.wait(async (interrupt) => {
+            const source = new URLSearchParams(window.location.search);
+            const response = await fetch("authorize", {
+                signal: interrupt,
+                method: "post",
+                headers: {
+                    "content-type": "text/json",
+                    authorization: `Bearer: ${token}`,
+                },
+                body: JSON.stringify({
+                    state: source.get("state"),
+                }),
+            });
+
+            if (!response.ok) {
+                return;
+            }
+
+            const destination = source.get("redirect_url") ?? "/";
+            const payload = copiedQueryParameters(source, ["state"], {
+                code: await response.text(),
+            });
+
+            window.location.href = `${destination}?${payload.toString()}`;
+        });
+    },
+}));

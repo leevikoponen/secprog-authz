@@ -1,7 +1,7 @@
 import { useComputed, useModel, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import type { JSX } from "preact";
-import { AuthenticationModel, type LoginBackend, LoginModel } from "./state.ts";
+import { AuthenticationModel, AuthorizationModel, type LoginBackend, LoginModel } from "./state.ts";
 
 function LoginForm({ backend }: { backend: LoginBackend }): JSX.Element {
     const state = useModel(LoginModel.bind(globalThis, backend));
@@ -37,6 +37,18 @@ function LoginForm({ backend }: { backend: LoginBackend }): JSX.Element {
     );
 }
 
+export function AuthorizationPage({ token }: { token: string }): JSX.Element {
+    const state = useModel(AuthorizationModel.bind(globalThis, token));
+
+    return (
+        <Show when={state.loading.ready} fallback={<p>Loading...</p>}>
+            <form onSubmit={state.confirm.bind(state)}>
+                <button type="submit">Authorize application</button>
+            </form>
+        </Show>
+    );
+}
+
 export function AuthenticationPage(): JSX.Element {
     const state = useModel(AuthenticationModel.bind(globalThis, "identity-token"));
     const hasToken = useComputed(() => state.token.value !== null);
@@ -67,7 +79,10 @@ export function AuthenticationPage(): JSX.Element {
                     </Show>
 
                     <Show when={hasToken} fallback={<LoginForm backend={state} />}>
-                        <p>Signed in successfully</p>
+                        <small>Signed in successfully</small>
+
+                        {/** biome-ignore lint/style/noNonNullAssertion: checked above */}
+                        <AuthorizationPage token={state.token.value!} />
                     </Show>
                 </Show>
             </main>

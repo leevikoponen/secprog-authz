@@ -32,6 +32,12 @@ fn main() -> anyhow::Result<()> {
                 (&Method::GET, "check") => handler::check(&state, &request)
                     .await
                     .unwrap_or_else(reply::status),
+                (&Method::POST, "authorize") => handler::authorize(&state, &mut request)
+                    .await
+                    .unwrap_or_else(reply::status),
+                (&Method::POST, "token") => handler::token(&state, &mut request)
+                    .await
+                    .unwrap_or_else(reply::status),
                 _ => reply::status(StatusCode::NOT_FOUND),
             }
         })?;

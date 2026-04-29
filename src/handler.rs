@@ -9,7 +9,10 @@ use hyper::{
 use rand::rngs::OsRng;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{application::SharedState, crypto::HmacSecurity};
+use crate::{application::SharedState, crypto::HmacSecurity, storage::CodeExchange};
+
+// none of our handlers should handle huge requests
+const REASONABLE_BODY_LIMIT: usize = 512;
 
 #[derive(Deserialize)]
 struct LoginForm {
@@ -18,13 +21,20 @@ struct LoginForm {
     totp: Option<Box<str>>,
 }
 
-impl LoginForm {
-    const BODY_LIMIT: usize = 512;
-}
-
 #[derive(Deserialize, Serialize)]
 struct IdentityToken {
     user: i64,
+}
+
+#[derive(Deserialize)]
+struct AuthorizeRequest<'source> {
+    state: Option<&'source str>,
+}
+
+#[derive(Deserialize)]
+struct TokenRequest<'source> {
+    code: &'source str,
+    state: Option<&'source str>,
 }
 
 pub async fn register(
@@ -33,7 +43,7 @@ pub async fn register(
 ) -> Result<Response<Bytes>, StatusCode> {
     let body = crate::extract::data(
         request,
-        LoginForm::BODY_LIMIT,
+        REASONABLE_BODY_LIMIT,
         HeaderValue::from_static("text/json"),
     )
     .await?;
@@ -75,7 +85,7 @@ pub async fn login(
 ) -> Result<Response<Bytes>, StatusCode> {
     let body = crate::extract::data(
         request,
-        LoginForm::BODY_LIMIT,
+        REASONABLE_BODY_LIMIT,
         HeaderValue::from_static("text/json"),
     )
     .await?;
@@ -157,4 +167,81 @@ pub async fn check(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     Ok(crate::reply::status(StatusCode::OK))
+}
+
+pub async fn authorize(
+    context: &SharedState,
+    request: &mut Request<Incoming>,
+) -> Result<Response<Bytes>, StatusCode> {
+    let mut token = crate::extract::bearer(request)?;
+    let body = crate::extract::data(
+        request,
+        REASONABLE_BODY_LIMIT,
+        HeaderValue::from_static("text/json"),
+    )
+    .await?;
+
+    let IdentityToken { user } = context
+        .verification
+        .schedule_task(move |security| security.verify_jwt(&mut token))
+        .await
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let code = context
+        .persistence
+        .schedule_task(move |database| {
+            let AuthorizeRequest { state } = serde_json::from_slice(&body)
+                .ok()
+                .ok_or(StatusCode::BAD_REQUEST)?;
+
+            database
+                .create_code_exchange(user, state)
+                .ok()
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+        })
+        .await?;
+
+    Ok(crate::reply::data(
+        StatusCode::OK,
+        HeaderValue::from_static("text/plain"),
+        Bytes::from(code.into_boxed_bytes()),
+    ))
+}
+
+pub async fn token(
+    context: &SharedState,
+    request: &mut Request<Incoming>,
+) -> Result<Response<Bytes>, StatusCode> {
+    let body = crate::extract::data(
+        request,
+        REASONABLE_BODY_LIMIT,
+        HeaderValue::from_static("text/json"),
+    )
+    .await?;
+
+    let CodeExchange { user } = context
+        .persistence
+        .schedule_task(move |database| {
+            let TokenRequest { code, state } = serde_json::from_slice(&body)
+                .ok()
+                .ok_or(StatusCode::BAD_REQUEST)?;
+
+            database
+                .take_code_exchange(code, state)
+                .ok()
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::NOT_FOUND)
+        })
+        .await?;
+
+    let token = context
+        .verification
+        .schedule_task(move |security| security.sign_jwt(&IdentityToken { user }))
+        .await;
+
+    Ok(crate::reply::data(
+        StatusCode::OK,
+        HeaderValue::from_static("text/plain"),
+        Bytes::from(token),
+    ))
 }
