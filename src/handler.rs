@@ -7,6 +7,7 @@ use hyper::{
     http::{Request, Response, StatusCode},
 };
 use rand::rngs::OsRng;
+use secrecy::{ExposeSecret, SecretBox};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{application::SharedState, crypto::HmacSecurity, storage::CodeExchange};
@@ -17,7 +18,7 @@ const REASONABLE_BODY_LIMIT: usize = 512;
 #[derive(Deserialize)]
 struct LoginForm {
     username: Box<str>,
-    password: Box<str>,
+    password: SecretBox<str>,
     totp: Option<Box<str>>,
 }
 
@@ -58,7 +59,10 @@ pub async fn register(
         .authentication
         .schedule_task(move |hasher| {
             hasher
-                .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+                .hash_password(
+                    password.expose_secret().as_bytes(),
+                    &SaltString::generate(&mut OsRng),
+                )
                 .expect("password hasher configuration should be valid")
                 .serialize()
         })
@@ -111,7 +115,10 @@ pub async fn login(
             .authentication
             .schedule_task(move |hasher| {
                 hasher
-                    .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+                    .hash_password(
+                        password.expose_secret().as_bytes(),
+                        &SaltString::generate(&mut OsRng),
+                    )
                     .expect("password hasher configuration should be valid")
                     .serialize()
             })
@@ -120,7 +127,12 @@ pub async fn login(
         return Err(StatusCode::UNAUTHORIZED);
     };
 
-    if let Some(security) = found.totp.as_deref().map(HmacSecurity::from_secret) {
+    if let Some(security) = found
+        .totp
+        .as_ref()
+        .map(ExposeSecret::expose_secret)
+        .map(HmacSecurity::from_secret)
+    {
         // FIXME: constant time equal even tough just tiny string of base 10 digits
         let code = totp.ok_or(StatusCode::FORBIDDEN)?;
         let correct = state
@@ -136,7 +148,10 @@ pub async fn login(
     state
         .authentication
         .schedule_task(move |hasher| {
-            hasher.verify_password(password.as_bytes(), &found.password.password_hash())
+            hasher.verify_password(
+                password.expose_secret().as_bytes(),
+                &found.password.password_hash(),
+            )
         })
         .await
         .ok()

@@ -1,10 +1,11 @@
 use argon2::password_hash::PasswordHashString;
 use rusqlite::{Connection, Error, OptionalExtension};
+use secrecy::SecretBox;
 
 pub struct UserInfo {
     pub id: i64,
     pub password: PasswordHashString,
-    pub totp: Option<Box<[u8]>>,
+    pub totp: Option<SecretBox<[u8]>>,
 }
 
 pub struct CodeExchange {
@@ -56,7 +57,8 @@ impl UserRepository {
                         .get_ref(2)?
                         .as_blob_or_null()?
                         .map(Vec::from)
-                        .map(Vec::into_boxed_slice),
+                        .map(Vec::into_boxed_slice)
+                        .map(SecretBox::from),
                 })
             },
         ))
