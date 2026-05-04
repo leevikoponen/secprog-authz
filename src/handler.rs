@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{sync::Arc, time::SystemTime};
 
 use argon2::{PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
 use hyper::{
@@ -29,6 +29,7 @@ struct IdentityToken {
 
 #[derive(Deserialize)]
 struct AuthorizeRequest<'source> {
+    target: &'source str,
     state: Option<&'source str>,
 }
 
@@ -202,12 +203,17 @@ pub async fn authorize(
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
+    let allowed = Arc::clone(&context.allowed);
     let code = context
         .persistence
         .schedule_task(move |database| {
-            let AuthorizeRequest { state } = serde_json::from_slice(&body)
+            let AuthorizeRequest { target, state } = serde_json::from_slice(&body)
                 .ok()
                 .ok_or(StatusCode::BAD_REQUEST)?;
+
+            if !target.parse().is_ok_and(|uri| allowed.contains(&uri)) {
+                return Err(StatusCode::FORBIDDEN);
+            }
 
             database
                 .create_code_exchange(user, state)

@@ -1,8 +1,8 @@
-use std::{rc::Rc, thread::JoinHandle};
+use std::{collections::HashSet, rc::Rc, sync::Arc, thread::JoinHandle};
 
 use anyhow::Result;
 use argon2::Argon2;
-use hyper::body::Bytes;
+use hyper::{body::Bytes, http::Uri};
 use tokio::{runtime::Builder, task::LocalSet};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing_subscriber::fmt::writer::{OptionalWriter, Tee};
@@ -11,6 +11,7 @@ use crate::{crypto::HmacSecurity, storage::UserRepository, worker::OffThread};
 
 pub struct SharedState {
     pub page: Bytes,
+    pub allowed: Arc<HashSet<Uri>>,
     pub persistence: OffThread<UserRepository>,
     pub authentication: OffThread<Argon2<'static>>,
     pub verification: OffThread<HmacSecurity>,
@@ -33,8 +34,22 @@ impl WorkerHandles {
 }
 
 pub fn prepare_state() -> Result<(Rc<SharedState>, WorkerHandles)> {
-    let page = std::fs::read("index.html").map(Bytes::from_owner)?;
     let database = UserRepository::initialize_from_env()?;
+
+    let page = std::fs::read("index.html").map(Bytes::from_owner)?;
+    let allowed = {
+        let buffer = std::env::var("ALLOWED_REDIRECTS")
+            .map(String::into_bytes)
+            .map(Bytes::from)
+            .unwrap_or_default();
+
+        buffer
+            .split(|&byte| byte == b',')
+            .filter(|section| !section.is_empty())
+            .map(|section| Uri::from_maybe_shared(buffer.slice_ref(section)))
+            .collect::<Result<_, _>>()
+            .map(Arc::new)?
+    };
 
     let persistence = OffThread::spawn_single(database, 16);
     let authentication = OffThread::spawn_many(Argon2::default(), 2, 16);
@@ -43,6 +58,7 @@ pub fn prepare_state() -> Result<(Rc<SharedState>, WorkerHandles)> {
     Ok((
         Rc::new(SharedState {
             page,
+            allowed,
             persistence: persistence.0,
             authentication: authentication.0,
             verification: verification.0,
