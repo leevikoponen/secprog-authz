@@ -181,6 +181,7 @@ export const AuthorizationModel = createModel((token: string) => ({
                 body: JSON.stringify({
                     target,
                     state: source.get("state"),
+                    challenge: source.get("code_challenge"),
                 }),
             });
 

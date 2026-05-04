@@ -10,6 +10,7 @@ pub struct UserInfo {
 
 pub struct CodeExchange {
     pub user: i64,
+    pub challenge: Option<Box<str>>,
 }
 
 pub struct UserRepository(Connection);
@@ -30,7 +31,9 @@ impl UserRepository {
 
             create table if not exists exchange (
                 code text primary key,
-                user integer not null references user
+                user integer not null references user,
+                state text,
+                challenge text
             ) strict;
             ",
         )?;
@@ -76,14 +79,19 @@ impl UserRepository {
         Ok(changed == 1)
     }
 
-    pub fn create_code_exchange(&self, user: i64, state: Option<&str>) -> Result<Box<str>, Error> {
+    pub fn create_code_exchange(
+        &self,
+        user: i64,
+        state: Option<&str>,
+        challenge: Option<&str>,
+    ) -> Result<Box<str>, Error> {
         self.0.query_one(
             "
-            insert into exchange (code, user, state)
-            values (hex(randomblob(16)), ?1, ?2)
+            insert into exchange (code, user, state, challenge)
+            values (hex(randomblob(16)), ?1, ?2, ?3)
             returning code
             ",
-            (user, state),
+            (user, state, challenge),
             |row| row.get(0),
         )
     }
@@ -97,10 +105,19 @@ impl UserRepository {
             "
             delete from exchange
             where code = ?1 and state = ?2
-            returning user
+            returning user, challenge
             ",
             (code, state),
-            |row| Ok(CodeExchange { user: row.get(0)? }),
+            |row| {
+                Ok(CodeExchange {
+                    user: row.get(0)?,
+                    challenge: row
+                        .get_ref(2)?
+                        .as_str_or_null()?
+                        .map(String::from)
+                        .map(String::into_boxed_str),
+                })
+            },
         ))
     }
 }

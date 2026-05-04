@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::SystemTime};
 
 use argon2::{PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
+use base64ct::{Base64Url, Encoding as _};
 use hyper::{
     body::{Bytes, Incoming},
     header::HeaderValue,
@@ -9,6 +10,7 @@ use hyper::{
 use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, SecretBox};
 use serde_derive::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::{application::SharedState, crypto::HmacSecurity, storage::CodeExchange};
 
@@ -31,12 +33,14 @@ struct IdentityToken {
 struct AuthorizeRequest<'source> {
     target: &'source str,
     state: Option<&'source str>,
+    challenge: Option<&'source str>,
 }
 
 #[derive(Deserialize)]
 struct TokenRequest<'source> {
     code: &'source str,
     state: Option<&'source str>,
+    verifier: Option<&'source str>,
 }
 
 pub async fn register(
@@ -207,7 +211,11 @@ pub async fn authorize(
     let code = context
         .persistence
         .schedule_task(move |database| {
-            let AuthorizeRequest { target, state } = serde_json::from_slice(&body)
+            let AuthorizeRequest {
+                target,
+                state,
+                challenge,
+            } = serde_json::from_slice(&body)
                 .ok()
                 .ok_or(StatusCode::BAD_REQUEST)?;
 
@@ -216,7 +224,7 @@ pub async fn authorize(
             }
 
             database
-                .create_code_exchange(user, state)
+                .create_code_exchange(user, state, challenge)
                 .ok()
                 .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
         })
@@ -240,18 +248,34 @@ pub async fn token(
     )
     .await?;
 
-    let CodeExchange { user } = context
+    let user = context
         .persistence
         .schedule_task(move |database| {
-            let TokenRequest { code, state } = serde_json::from_slice(&body)
+            let TokenRequest {
+                code,
+                state,
+                verifier,
+            } = serde_json::from_slice(&body)
                 .ok()
                 .ok_or(StatusCode::BAD_REQUEST)?;
 
-            database
+            let CodeExchange { user, challenge } = database
                 .take_code_exchange(code, state)
                 .ok()
                 .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
-                .ok_or(StatusCode::NOT_FOUND)
+                .ok_or(StatusCode::NOT_FOUND)?;
+
+            let provided = verifier.map(|value| {
+                // the actual size calculation is const so we could construct an array string
+                // but unfortunately that's not how it's publicly exposed to us by the crate
+                Base64Url::encode_string(&Sha256::new().chain_update(value.as_bytes()).finalize())
+            });
+
+            if provided.as_deref() != challenge.as_deref() {
+                return Err(StatusCode::FORBIDDEN);
+            }
+
+            Ok(user)
         })
         .await?;
 
