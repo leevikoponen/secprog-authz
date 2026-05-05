@@ -1,4 +1,4 @@
-#import "@preview/diagraph:0.3.6": raw-render
+#import "@preview/diagraph:0.3.7": raw-render
 
 #set heading(numbering: "1.")
 #set text(font: "New Computer Modern", lang: "en", region: "fi")
@@ -23,8 +23,6 @@ context and risks related to the application to document reasoning that then
 allows further review when assumptions or the design changes.
 
 = Architecture
-
-Note that this section is currently more of a plan than an accurate description.
 
 == Flow
 
@@ -102,9 +100,54 @@ request handling is overkill over just spreading work through other means.
 
 === Frontend
 
-The frontend is implemented as a tiny vanilla single page application, largely
-just to save from the effort of doing HTML templating and dealing with cookie
-state on the backend side.
+The frontend is implemented as a tiny single page application, largely just to
+save from the effort of doing HTML templating and dealing with cookie state on
+the backend side, as well as more complicated CSRF mitigations required when
+using cookies as the authorization method.
+
+== Solutions
+
+=== Password Handling
+
+Password storage has been implemented according to the OWASP recommendations in
+@cheatsheets[Password Storage Cheat Sheet], in summary, the hashing
+library in question has been verified to use appropriately high memory and
+iteration costs with it's default options.
+
+In addition, extra care has been taken to ensure that the plain text password
+is being treated with a secret specific type that guarantees memory being zeroed
+and prevents accidental exposure, requiring explcictly requesting access the
+value itself.
+
+The flow for invalid usernames includes hashing the password regardless to make
+it harder to extract account existence. Ideally a more modern approach like
+OPAQUE @opaque would be used to verify passwords, as it has been explicitly
+designed to support this case natively, in addition to the server never gaining
+the temporary access to the password plaintext.
+
+== Defects
+
+=== Authorization Scopes
+
+The implementation of authorization scope handling has been left out due to time
+pressure. This was done with the understanding that while it's a large part of
+the application's usablity, it's not entirely relevant in terms of this course's
+scope, given implementation is just about combining some simple set union and
+intersection operations.
+
+=== Client Registration
+
+Similar to above, the concept of registering client applications that have
+access to specified scopes and allow specific redirect URLs is quite core to
+the functionality, but has this has been left as a simple globally configured
+allow list.
+
+=== Token Verification
+
+While the current approach of requiring client applications to verify tokens
+against the authorization server is perfectly workable, it's becoming more
+common to utilize asymmetric signatures that are published through a JWK @jwk
+key set that applications refresh periodically to handle rotation.
 
 #pagebreak()
 
