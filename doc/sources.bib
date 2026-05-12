@@ -96,3 +96,20 @@
     url     = {https://cheatsheetseries.owasp.org/},
     urldate = {2026-05-04},
 }
+
+@inproceedings{oauch,
+    author = {Philippaerts, Pieter and Preuveneers, Davy and Joosen, Wouter},
+    title = {OAuch: Exploring Security Compliance in the OAuth 2.0 Ecosystem},
+    year = {2022},
+    isbn = {9781450397049},
+    publisher = {Association for Computing Machinery},
+    address = {New York, NY, USA},
+    url = {https://doi.org/10.1145/3545948.3545955},
+    doi = {10.1145/3545948.3545955},
+    abstract = {The OAuth 2.0 protocol is a popular and widely adopted authorization protocol. It has been proven secure in a comprehensive formal security analysis, yet new vulnerabilities continue to appear in popular OAuth implementations. This paper sets out to improve the security of the OAuth landscape by measuring how well individual identity providers (IdPs) implement the security specifications defined in the OAuth standard, and by providing detailed and targeted feedback to the operators to improve the compliance of their service. We present a tool, called OAuch, that tests and analyzes IdPs according to the guidelines of the OAuth standards and security best practices. We evaluate 100 publicly deployed OAuth IdPs using OAuch and aggregate the results to create a unique overview of the current state of practice in the OAuth ecosystem. We determine that, on average, an OAuth IdP does not implement 34\% of the security specifications present in the OAuth standards, including 20\% of the required specifications. We then validate the IdPs against the OAuth threat model. The analysis shows that 97 IdPs leave one or more threats completely unmitigated (with an average of 4 unmitigated threats per IdP). No IdPs fully mitigate all threats. We further validate the results by picking four attack vectors and using the tool’s output to determine which IdPs to attack. The results were highly accurate, with a false positive rate of 1.45\% and a false negative rate of 1.48\% for the four attack vectors combined.},
+    booktitle = {Proceedings of the 25th International Symposium on Research in Attacks, Intrusions and Defenses},
+    pages = {460–481},
+    numpages = {22},
+    location = {Limassol, Cyprus},
+    series = {RAID '22}
+}
