@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use argon2::{PasswordHasher as _, PasswordVerifier as _, password_hash::SaltString};
 use base64ct::{Base64Url, Encoding as _};
@@ -17,6 +20,9 @@ use crate::{application::SharedState, crypto::HmacSecurity, storage::CodeExchang
 // none of our handlers should handle huge requests
 const REASONABLE_BODY_LIMIT: usize = 512;
 
+// tokens should be reasonably short lived to avoid worrying about revocation
+const ACCESS_TOKEN_LIFETIME: u64 = 3600;
+
 #[derive(Deserialize)]
 struct LoginForm {
     username: Box<str>,
@@ -25,8 +31,24 @@ struct LoginForm {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(transparent)]
+struct Timestamp(u64);
+
+impl Timestamp {
+    fn now() -> Self {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .as_ref()
+            .map(Duration::as_secs)
+            .map(Self)
+            .expect("current time shouldn't reasonably be before unix epoch")
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 struct IdentityToken {
     user: i64,
+    issued: Timestamp,
 }
 
 #[derive(Deserialize)]
@@ -164,7 +186,12 @@ pub async fn login(
 
     let token = state
         .verification
-        .schedule_task(move |security| security.sign_jwt(&IdentityToken { user: found.id }))
+        .schedule_task(move |security| {
+            security.sign_jwt(&IdentityToken {
+                user: found.id,
+                issued: Timestamp::now(),
+            })
+        })
         .await;
 
     Ok(crate::reply::data(
@@ -174,17 +201,26 @@ pub async fn login(
     ))
 }
 
-pub async fn check(
-    state: &SharedState,
-    request: &Request<Incoming>,
-) -> Result<Response<Bytes>, StatusCode> {
+async fn verify(state: &SharedState, request: &Request<Incoming>) -> Result<i64, StatusCode> {
     let mut token = crate::extract::bearer(request)?;
-
-    let IdentityToken { .. } = state
+    let IdentityToken { user, issued } = state
         .verification
         .schedule_task(move |security| security.verify_jwt(&mut token))
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if issued.0 + ACCESS_TOKEN_LIFETIME > Timestamp::now().0 {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    Ok(user)
+}
+
+pub async fn check(
+    state: &SharedState,
+    request: &Request<Incoming>,
+) -> Result<Response<Bytes>, StatusCode> {
+    let _ = verify(state, &request).await?;
 
     Ok(crate::reply::status(StatusCode::OK))
 }
@@ -193,7 +229,6 @@ pub async fn authorize(
     context: &SharedState,
     request: &mut Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
-    let mut token = crate::extract::bearer(request)?;
     let body = crate::extract::data(
         request,
         REASONABLE_BODY_LIMIT,
@@ -201,12 +236,7 @@ pub async fn authorize(
     )
     .await?;
 
-    let IdentityToken { user } = context
-        .verification
-        .schedule_task(move |security| security.verify_jwt(&mut token))
-        .await
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
+    let user = verify(context, request).await?;
     let allowed = Arc::clone(&context.allowed);
     let code = context
         .persistence
@@ -281,7 +311,12 @@ pub async fn token(
 
     let token = context
         .verification
-        .schedule_task(move |security| security.sign_jwt(&IdentityToken { user }))
+        .schedule_task(move |security| {
+            security.sign_jwt(&IdentityToken {
+                user,
+                issued: Timestamp::now(),
+            })
+        })
         .await;
 
     Ok(crate::reply::data(
