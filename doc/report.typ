@@ -102,6 +102,11 @@ save from the effort of doing HTML templating and dealing with cookie state on
 the backend side, as well as more complicated CSRF mitigations required when
 using cookies as the authorization method.
 
+In practice this was a poor choice, only made for an initial idea of needing
+the infrastructure to build a WASM component for verifying passwords with
+OPAQUE @opaque or doing fully featured TOTP @totp support, like generating QR
+codes on the frontend.
+
 = Solutions
 
 == Password Handling
@@ -109,12 +114,14 @@ using cookies as the authorization method.
 Password storage has been implemented according to the OWASP recommendations
 @cheatsheets[Password Storage Cheat Sheet], in summary, the hashing
 library in question has been verified to use appropriately high memory and
-iteration costs with it's default options.
+iteration costs with the default options.
 
 In addition, extra care has been taken to ensure that the plain text password
 is being treated with a secret specific type that guarantees memory being zeroed
 and prevents accidental exposure, requiring explcictly requesting access the
-value itself.
+value itself. In practice, this doesn't quite work due to not doing the same
+with the request body content itself, but still serves to make it harder to leak
+information accidentally, e.g. in logging output.
 
 The flow for invalid usernames includes hashing the password regardless to make
 it harder to extract account existence. Ideally a more modern approach like
@@ -123,6 +130,9 @@ designed to support this case natively, in addition to the server never gaining
 the temporary access to the password plaintext.
 
 == Session Management
+
+The basic concept of the design is built on access tokens being short lived
+signed tokens, with longer lived state being database backed with random IDs.
 
 = Defects
 
@@ -162,7 +172,7 @@ HTTP status codes, nor does it have the infrastructure for logging the details.
 
 == Limited Testing
 
-The application has only a minimal amount of testing of the basic usage and
+The application has only a minimal amount of testing of the basic login flow and
 limited sanity checks against potential misuse. This was left bare both for time
 reasons and the existence of tooling like OAuch @oauch that could be used to
 find issues once the implementation is expanded to be more standard compliant.
@@ -186,6 +196,12 @@ Specifications like OAuth @oauth21 are deviliously complex, having been built up
 over years of iteration and adding new security features, even with the 2.1
 version's draft that I mostly looked at, which has removed some old insecure
 approahes and included separate specifications like PKCE into the same document.
+
+== Time Management
+
+I had unexpectedly little time for this course for personal reasons, which meant
+that a fundamentally realistic goal of being specification compliant ended up
+being way too much to ask for.
 
 = References
 
