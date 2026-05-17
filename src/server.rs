@@ -12,6 +12,12 @@ use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::Instrument as _;
 
+/// The connection handling sets up how we call into [`hyper`] to get our nice
+/// misuse resistant request/response handler function, instead of running into
+/// the fun world of how slightly non compliant implementations of something
+/// even as simple as the fully text based HTTP/1.1 specification end up leading
+/// into security vulnerabilities caused by protocol disagreements between
+/// services like CDNs or other proxies in the middle.
 async fn handle_connection(
     stream: TcpStream,
     cancellation: CancellationToken,
@@ -48,6 +54,8 @@ async fn handle_connection(
     }
 }
 
+/// The main request handling loop handles cancellation and spawns the
+/// connection handling tasks onto the background.
 async fn accept_connections(
     context: TaskTracker,
     cancellation: CancellationToken,
@@ -80,6 +88,8 @@ async fn accept_connections(
     }
 }
 
+/// Set up the server with appropriate tracing context building to allow log
+/// messages to be tied to the surrounding configuration with attributes.
 pub fn start_listening(
     context: TaskTracker,
     cancellation: CancellationToken,

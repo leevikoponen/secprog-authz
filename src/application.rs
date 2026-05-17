@@ -25,6 +25,9 @@ pub struct WorkerHandles {
 }
 
 impl WorkerHandles {
+    /// Wait for the worker threads to finish when the application is already
+    /// done otherwise shutting down that will make the actor threads to no
+    /// longer have live senders.
     pub fn expect_join_success(self) {
         [self.persistence, self.authentication, self.verification]
             .into_iter()
@@ -38,6 +41,9 @@ pub fn prepare_state() -> Result<(Rc<SharedState>, WorkerHandles)> {
 
     let page = std::fs::read("index.html").map(Bytes::from_owner)?;
     let allowed = {
+        // we might as well parse comma separated values in a way that doesn't
+        // end up causing multiple heap buffers, but instead will refer to the original
+        // value allocation
         let buffer = std::env::var("ALLOWED_REDIRECTS")
             .map(String::into_bytes)
             .map(Bytes::from)
@@ -71,6 +77,8 @@ pub fn prepare_state() -> Result<(Rc<SharedState>, WorkerHandles)> {
     ))
 }
 
+/// Wrap the actual application startup logic with creating the main thread
+/// I/O runtime and logging infrastructure.
 pub fn initialize_runtime(
     application: impl AsyncFnOnce(TaskTracker, CancellationToken) -> Result<()>,
 ) -> Result<()> {

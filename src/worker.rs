@@ -10,6 +10,17 @@ struct ActionCallback<T>(Box<dyn FnOnce(&mut T) + Send + 'static>);
 pub struct OffThread<T>(Sender<ActionCallback<T>>);
 
 impl<T: Send + 'static> OffThread<T> {
+    /// Since I've chosen to assume that much of our server's time is going to
+    /// be spent doing the relatively heavy cryptography, there's not much
+    /// reason to use [`tokio`]'s much more complicated multi threaded task
+    /// stealing executor.
+    ///
+    /// Thus we need a way to offload specific tasks to specific threads,
+    /// leaving the main thread to do little beyond waiting for IO and
+    /// coordinating minimal logic beyond steps.
+    ///
+    /// Building an abstraction around the concept of an actor that simply
+    /// receives dynamic work callback tends to be the path of least resistance.
     pub fn spawn_single(mut state: T, buffer: usize) -> (Self, JoinHandle<()>) {
         let (sender, mut receiver) = mpsc::channel(buffer);
         let thread = std::thread::spawn(move || {
@@ -23,6 +34,16 @@ impl<T: Send + 'static> OffThread<T> {
 }
 
 impl<T: Send + Clone + 'static> OffThread<T> {
+    /// Of course even quite modest hardware setups tend to have many cores
+    /// available, so some types of actors might work using multiple instances.
+    ///
+    /// The easiest way is to just have one thread doing something like a simple
+    /// round robin dipatching loop, since a worker is probably related to
+    /// similarly heavy tasks.
+    ///
+    /// Ideally this work shuffling thread would likely just fit on the main
+    /// thread itself, but the interface would need to differ from the single
+    /// threaded one so not really worth focusing on.
     pub fn spawn_many(state: T, count: usize, buffer: usize) -> (Self, JoinHandle<()>) {
         let (sender, mut receiver) = mpsc::channel(buffer);
         let thread = std::thread::spawn(move || {
@@ -55,6 +76,9 @@ impl<T: Send + Clone + 'static> OffThread<T> {
 }
 
 impl<T> OffThread<T> {
+    /// The given work callback can be then easily be wrapped to provide an
+    /// interface more like just giving a function with associated data and
+    /// having it magically be asynchronously executed on some other thread.
     pub async fn schedule_task<O: Send + 'static>(
         &self,
         action: impl FnOnce(&mut T) -> O + Send + 'static,

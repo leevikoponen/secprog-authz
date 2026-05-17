@@ -19,6 +19,8 @@ const SECTION_SEPARATOR: u8 = b'.';
 const TOTP_DIGITS: usize = 8;
 const TOTP_STEP: Duration = Duration::from_secs(30);
 
+/// Slightly wonky state machine based approach for finding the section ranges
+/// of the full token value.
 enum TokenTraverser {
     Initial,
     FoundSingle(usize),
@@ -76,11 +78,18 @@ impl TokenTraverser {
     }
 }
 
+/// HS256 continues to be perfectly fine and secure, I really don't see a point
+/// in using anything else if you don't need the public/private key
+/// infrastructure that something like OpenID Connect ends up utilizing.
 #[derive(Clone)]
 #[must_use]
 pub struct HmacSecurity(Key<Hmac<Sha256>>);
 
 impl HmacSecurity {
+    /// I originally wanted to store the key in database to persist across
+    /// restarts, but realistically there's no point since these JWTs are only
+    /// used for short lived access tokens that can be transparently refreshed
+    /// anyways without the whole redirect flow.
     pub fn generate_random() -> Self {
         let mut output = Key::<Hmac<Sha256>>::default();
 
@@ -91,10 +100,13 @@ impl HmacSecurity {
         Self(output)
     }
 
+    /// But using a stored secret is required for the TOTP codepath.
     pub fn from_secret(value: &[u8]) -> Self {
         Self(Key::<Hmac<Sha256>>::clone_from_slice(value))
     }
 
+    /// Dedode and verify that the given token is parsable as such and has been
+    /// signed with this key and then parse it's payload as JSON.
     pub fn verify_jwt<'buffer, T: Deserialize<'buffer>>(
         &self,
         token: &'buffer mut [u8],
@@ -113,6 +125,7 @@ impl HmacSecurity {
         serde_json::from_slice(second).ok()
     }
 
+    /// Construct a token with the given payload that will be then signed.
     pub fn sign_jwt<T: Serialize + ?Sized>(&self, value: &T) -> String {
         let payload = serde_json::to_string(value).expect("token payload should be serializable");
         let mut digest = Output::<Hmac<Sha256>>::default();
@@ -143,6 +156,7 @@ impl HmacSecurity {
         String::from_utf8(buffer).expect("encoded data should be valid utf-8")
     }
 
+    /// Might as well implement the TOTP exactly how it's described in the spec.
     pub fn generate_totp(&self, time: SystemTime) -> ArrayString<TOTP_DIGITS> {
         let time = time
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -177,6 +191,10 @@ impl HmacSecurity {
         output
     }
 
+    /// Clock spread or otherwise submitting and the request being handled
+    /// taking some time in the middle is common enough to need accommodating by
+    /// allowing the values of previous and next steps is instructed in the
+    /// spec, but I'm actually quite restrictive to only go one step away.
     pub fn verify_totp(&self, time: SystemTime, given: &str) -> bool {
         [time, time - TOTP_STEP, time + TOTP_STEP]
             .into_iter()

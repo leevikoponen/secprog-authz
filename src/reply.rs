@@ -4,6 +4,7 @@ use hyper::{
     http::{Response, StatusCode},
 };
 
+/// Helper function for returning a simple response with some kind of data.
 pub fn data(code: StatusCode, kind: HeaderValue, content: Bytes) -> Response<Bytes> {
     Response::builder()
         .status(code)
@@ -12,6 +13,7 @@ pub fn data(code: StatusCode, kind: HeaderValue, content: Bytes) -> Response<Byt
         .expect("response shouldn't have invalid fields")
 }
 
+/// Simply return a response code and it's associated message.
 pub fn status(code: StatusCode) -> Response<Bytes> {
     data(
         code,
