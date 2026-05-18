@@ -88,25 +88,7 @@ export const AuthenticationModel = createModel((key: string) => ({
     check(): void {
         this.loading.wait(async (interrupt) => {
             const entry = await cookieStore.get(key);
-            if (entry?.value === undefined) {
-                this.token.value = null;
-                return;
-            }
-
-            const response = await fetch("check", {
-                signal: interrupt,
-                headers: {
-                    authorization: `Bearer: ${entry.value}`,
-                },
-            });
-
-            if (response.ok) {
-                this.token.value = entry.value;
-                return;
-            }
-
-            await cookieStore.delete(key);
-            this.token.value = null;
+            this.token.value = entry?.value ?? null;
         });
     },
 

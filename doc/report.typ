@@ -134,6 +134,12 @@ the temporary access to the password plaintext.
 The basic concept of the design is built on access tokens being short lived
 signed tokens, with longer lived state being database backed with random IDs.
 
+Since the implementation is quite barebones session IDs could be reused as
+refresh tokens since there's no surrounding machinery that'd utilize them being
+separate concepts implemented. At the same time, that felt too wonky to publish,
+so the refresh token flow remains unimplemented despite everything being in
+place for it.
+
 = Defects
 
 == Specification Compliance

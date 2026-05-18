@@ -5,6 +5,9 @@ use secrecy::SecretBox;
 // let's be strict since supposed to get token immediately after redirect back
 const PKCE_LIFETIME_SECONDS: i64 = 60 * 2;
 
+// session lifetime can be quite strict as it's calculated against last usage
+const SESSION_LIFETIME_SECONDS: i64 = 60 * 60 * 3;
+
 pub struct UserInfo {
     pub id: i64,
     pub password: PasswordHashString,
@@ -14,6 +17,10 @@ pub struct UserInfo {
 pub struct CodeExchange {
     pub user: i64,
     pub challenge: Box<str>,
+}
+
+pub struct SessionState {
+    pub user: i64,
 }
 
 pub struct UserRepository(Connection);
@@ -32,10 +39,17 @@ impl UserRepository {
                 totp_secret blob
             ) strict;
 
-            create table if not exists exchange (
-                code text primary key,
+            create table if not exists session (
+                key text primary key default (hex(randomblob(16))),
                 user integer not null references user,
-                created integer not null default unixepoch(),
+                created integer not null default (unixepoch()),
+                utilized integer
+            ) strict;
+
+            create table if not exists exchange (
+                code text primary key default (hex(randomblob(16))),
+                user integer not null references user,
+                created integer not null default (unixepoch()),
                 state text not null,
                 challenge text not null
             ) strict;
@@ -103,8 +117,8 @@ impl UserRepository {
     ) -> Result<Box<str>, Error> {
         self.0.query_one(
             "
-            insert into exchange (code, user, state, challenge)
-            values (hex(randomblob(16)), ?1, ?2, ?3)
+            insert into exchange (user, state, challenge)
+            values (?1, ?2, ?3)
             returning code
             ",
             (user, state, challenge),
@@ -132,6 +146,32 @@ impl UserRepository {
                     challenge: row.get_ref(2)?.as_str()?.to_owned().into_boxed_str(),
                 })
             },
+        ))
+    }
+
+    pub fn create_user_session(&self, user: i64) -> Result<Box<str>, Error> {
+        self.0.query_one(
+            "
+            insert into session (user)
+            values (?1)
+            returning key
+            ",
+            [user],
+            |row| Ok(row.get_ref(0)?.as_str()?.to_owned().into_boxed_str()),
+        )
+    }
+
+    pub fn resolve_user_session(&self, id: &[u8]) -> Result<Option<SessionState>, Error> {
+        OptionalExtension::optional(self.0.query_one(
+            "
+            update session
+            set utilized = unixepoch()
+            where key = ?1
+            and utilized + ?2 < unixepoch()
+            returning user
+            ",
+            (id, SESSION_LIFETIME_SECONDS),
+            |row| Ok(SessionState { user: row.get(0)? }),
         ))
     }
 }

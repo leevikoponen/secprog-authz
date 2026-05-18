@@ -7,8 +7,7 @@ use argon2::{PasswordHasher as _, PasswordVerifier as _, password_hash::SaltStri
 use base64ct::{Base64Url, Encoding as _};
 use hyper::{
     body::{Bytes, Incoming},
-    header::HeaderValue,
-    http::{Request, Response, StatusCode},
+    http::{HeaderValue, Request, Response, StatusCode},
 };
 use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, SecretBox};
@@ -184,24 +183,21 @@ pub async fn login(
         .ok()
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let token = state
-        .verification
-        .schedule_task(move |security| {
-            security.sign_jwt(&IdentityToken {
-                user: found.id,
-                issued: Timestamp::now(),
-            })
-        })
-        .await;
+    let key = state
+        .persistence
+        .schedule_task(move |database| database.create_user_session(found.id))
+        .await
+        .ok()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(crate::reply::data(
         StatusCode::OK,
         HeaderValue::from_static("text/plain"),
-        Bytes::from(token),
+        Bytes::from(key.into_boxed_bytes()),
     ))
 }
 
-async fn verify(state: &SharedState, request: &Request<Incoming>) -> Result<i64, StatusCode> {
+async fn verify_token(state: &SharedState, request: &Request<Incoming>) -> Result<i64, StatusCode> {
     let mut token = crate::extract::bearer(request)?;
     let IdentityToken { user, issued } = state
         .verification
@@ -216,11 +212,27 @@ async fn verify(state: &SharedState, request: &Request<Incoming>) -> Result<i64,
     Ok(user)
 }
 
+async fn verify_session(
+    state: &SharedState,
+    request: &Request<Incoming>,
+) -> Result<i64, StatusCode> {
+    let key = crate::extract::bearer(request)?;
+    let session = state
+        .persistence
+        .schedule_task(move |database| database.resolve_user_session(&key))
+        .await
+        .ok()
+        .flatten()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    Ok(session.user)
+}
+
 pub async fn check(
     state: &SharedState,
     request: &Request<Incoming>,
 ) -> Result<Response<Bytes>, StatusCode> {
-    let _ = verify(state, &request).await?;
+    let _ = verify_token(state, &request).await?;
 
     Ok(crate::reply::status(StatusCode::OK))
 }
@@ -236,7 +248,7 @@ pub async fn authorize(
     )
     .await?;
 
-    let user = verify(context, request).await?;
+    let user = verify_session(context, request).await?;
     let allowed = Arc::clone(&context.allowed);
     let code = context
         .persistence
