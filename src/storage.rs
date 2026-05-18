@@ -2,6 +2,9 @@ use argon2::password_hash::PasswordHashString;
 use rusqlite::{Connection, Error, OptionalExtension};
 use secrecy::SecretBox;
 
+// let's be strict since supposed to get token immediately after redirect back
+const PKCE_LIFETIME_SECONDS: i64 = 60 * 2;
+
 pub struct UserInfo {
     pub id: i64,
     pub password: PasswordHashString,
@@ -32,11 +35,24 @@ impl UserRepository {
             create table if not exists exchange (
                 code text primary key,
                 user integer not null references user,
+                created integer not null default unixepoch(),
                 state text,
                 challenge text
             ) strict;
             ",
         )?;
+
+        let cleaned = database.execute(
+            "
+            delete from exchange
+            where created + ?1 > unixepoch()
+            ",
+            [PKCE_LIFETIME_SECONDS],
+        )?;
+
+        if cleaned > 0 {
+            tracing::info!("cleaned up {cleaned} expired pkce exchanges");
+        }
 
         Ok(Self(database))
     }
@@ -104,10 +120,12 @@ impl UserRepository {
         OptionalExtension::optional(self.0.query_one(
             "
             delete from exchange
-            where code = ?1 and state = ?2
+            where code = ?1
+            and state = ?2
+            and created + ?3 < unixepoch()
             returning user, challenge
             ",
-            (code, state),
+            (code, state, PKCE_LIFETIME_SECONDS),
             |row| {
                 Ok(CodeExchange {
                     user: row.get(0)?,
