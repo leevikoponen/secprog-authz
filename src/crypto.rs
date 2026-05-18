@@ -196,6 +196,10 @@ impl HmacSecurity {
     /// allowing the values of previous and next steps is instructed in the
     /// spec, but I'm actually quite restrictive to only go one step away.
     pub fn verify_totp(&self, time: SystemTime, given: &str) -> bool {
+        // while this could be made to work with constant time operations,
+        // I've understood that isn't done since the actual valid code changes
+        // fast enough that even quite loose rate limiting makes attacking
+        // this impossible even with a reliable-ish timing attack possiblity
         [time, time - TOTP_STEP, time + TOTP_STEP]
             .into_iter()
             .any(|attempt| &self.generate_totp(attempt) == given)

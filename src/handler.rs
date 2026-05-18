@@ -159,7 +159,6 @@ pub async fn login(
         .map(ExposeSecret::expose_secret)
         .map(HmacSecurity::from_secret)
     {
-        // FIXME: constant time equal even tough just tiny string of base 10 digits
         let code = totp.ok_or(StatusCode::FORBIDDEN)?;
         let correct = state
             .verification
@@ -313,6 +312,8 @@ pub async fn token(
                 &Sha256::new().chain_update(verifier.as_bytes()).finalize(),
             );
 
+            // there's no possible timing attack possibility here, since trying to complete
+            // the flow is terminal, with the above query deleting regardless of validity
             if &provided != &*challenge {
                 return Err(StatusCode::FORBIDDEN);
             }
