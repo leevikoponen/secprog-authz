@@ -54,15 +54,15 @@ struct IdentityToken {
 #[derive(Deserialize)]
 struct AuthorizeRequest<'source> {
     target: &'source str,
-    state: Option<&'source str>,
-    challenge: Option<&'source str>,
+    state: &'source str,
+    challenge: &'source str,
 }
 
 #[derive(Deserialize)]
 struct TokenRequest<'source> {
     code: &'source str,
-    state: Option<&'source str>,
-    verifier: Option<&'source str>,
+    state: &'source str,
+    verifier: &'source str,
 }
 
 pub async fn register(
@@ -295,13 +295,13 @@ pub async fn token(
                 .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
                 .ok_or(StatusCode::NOT_FOUND)?;
 
-            let provided = verifier.map(|value| {
-                // the actual size calculation is const so we could construct an array string
-                // but unfortunately that's not how it's publicly exposed to us by the crate
-                Base64Url::encode_string(&Sha256::new().chain_update(value.as_bytes()).finalize())
-            });
+            // the actual size calculation is const so we could construct an array string
+            // but unfortunately that's not how it's publicly exposed to us by the crate
+            let provided = Base64Url::encode_string(
+                &Sha256::new().chain_update(verifier.as_bytes()).finalize(),
+            );
 
-            if provided.as_deref() != challenge.as_deref() {
+            if &provided != &*challenge {
                 return Err(StatusCode::FORBIDDEN);
             }
 

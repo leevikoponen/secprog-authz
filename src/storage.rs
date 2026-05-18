@@ -13,7 +13,7 @@ pub struct UserInfo {
 
 pub struct CodeExchange {
     pub user: i64,
-    pub challenge: Option<Box<str>>,
+    pub challenge: Box<str>,
 }
 
 pub struct UserRepository(Connection);
@@ -36,8 +36,8 @@ impl UserRepository {
                 code text primary key,
                 user integer not null references user,
                 created integer not null default unixepoch(),
-                state text,
-                challenge text
+                state text not null,
+                challenge text not null
             ) strict;
             ",
         )?;
@@ -98,8 +98,8 @@ impl UserRepository {
     pub fn create_code_exchange(
         &self,
         user: i64,
-        state: Option<&str>,
-        challenge: Option<&str>,
+        state: &str,
+        challenge: &str,
     ) -> Result<Box<str>, Error> {
         self.0.query_one(
             "
@@ -115,7 +115,7 @@ impl UserRepository {
     pub fn take_code_exchange(
         &self,
         code: &str,
-        state: Option<&str>,
+        state: &str,
     ) -> Result<Option<CodeExchange>, Error> {
         OptionalExtension::optional(self.0.query_one(
             "
@@ -129,11 +129,7 @@ impl UserRepository {
             |row| {
                 Ok(CodeExchange {
                     user: row.get(0)?,
-                    challenge: row
-                        .get_ref(2)?
-                        .as_str_or_null()?
-                        .map(String::from)
-                        .map(String::into_boxed_str),
+                    challenge: row.get_ref(2)?.as_str()?.to_owned().into_boxed_str(),
                 })
             },
         ))
